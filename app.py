@@ -4,6 +4,7 @@ from docxtpl import DocxTemplate
 import io
 import zipfile
 import time
+import re # <--- ADD THIS NEW LINE HERE
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
 
@@ -26,14 +27,10 @@ if uploaded_files:
     st.info(f"📁 You have successfully uploaded {len(uploaded_files)} file(s).")
 
 def extract_data_from_document(file):
-    # Connect to your specific Azure account
     client = DocumentAnalysisClient(endpoint=AZURE_ENDPOINT, credential=AzureKeyCredential(AZURE_KEY))
-    
-    # Send the file to Azure
     poller = client.begin_analyze_document("prebuilt-document", document=file.getvalue())
     result = poller.result()
     
-    # DEFINE ONLY THE COLUMNS YOU WANT
     extracted_data = {
         "Filename": file.name,
         "NAMA_PEMBEKAL": "",
@@ -45,31 +42,65 @@ def extract_data_from_document(file):
         "TAJUK_PEROLEHAN": ""
     }
     
-    # LOOP THROUGH AND FILTER
+    # 1. FIRST PASS: Try standard Key-Value Pairs for the easy fields
     if result.key_value_pairs:
         for kv_pair in result.key_value_pairs:
             if kv_pair.key and kv_pair.value:
                 raw_key = kv_pair.key.content.upper()
-                
-                # Replaces newlines with a normal space
                 val_text = kv_pair.value.content.replace('\n', ' ').strip()
                 
-                # MATCH TO YOUR TEMPLATE TAGS
-                if "NAMA PEMBEKAL" in raw_key:
-                    extracted_data["NAMA_PEMBEKAL"] = val_text
-                elif "EMEL" in raw_key:
-                    extracted_data["EMEL"] = val_text
-                elif "TEL" in raw_key:
-                    extracted_data["NO_TEL"] = val_text
-                elif "SYARIKAT" in raw_key:
-                    extracted_data["NAMA_SYARIKAT"] = val_text
-                elif "ALAMAT" in raw_key and "PREMIS" in raw_key:
-                    extracted_data["ALAMAT_PREMIS"] = val_text
-                elif "TARIKH" in raw_key and not extracted_data["TARIKH"]: 
-                    extracted_data["TARIKH"] = val_text
-                elif "TAJUK" in raw_key or "PEROLEHAN" in raw_key:
-                    extracted_data["TAJUK_PEROLEHAN"] = val_text
+                if "NAMA PEMBEKAL" in raw_key: extracted_data["NAMA_PEMBEKAL"] = val_text
+                elif "EMEL" in raw_key: extracted_data["EMEL"] = val_text
+                elif "TEL" in raw_key: extracted_data["NO_TEL"] = val_text
+                elif "ALAMAT" in raw_key and "PREMIS" in raw_key: extracted_data["ALAMAT_PREMIS"] = val_text
+                elif "TARIKH" in raw_key and not extracted_data["TARIKH"]: extracted_data["TARIKH"] = val_text
+
+    # 2. SECOND PASS: Advanced Boundary Checking for Syarikat and Tajuk
+    all_lines = []
+    for page in result.pages:
+        for line in page.lines:
+            all_lines.append(line.content.strip())
+            
+    # --- TAJUK PEROLEHAN BOUNDARY LOGIC ---
+    for i, line_text in enumerate(all_lines):
+        if "TAJUK" in line_text.upper() or "PEROLEHAN" in line_text.upper():
+            collected_title = []
+            # Look at the next few lines (up to 10 lines max)
+            for j in range(i + 1, min(i + 10, len(all_lines))):
+                next_line = all_lines[j].upper()
                 
+                # THE STOPPING WALL
+                if "TARIKH PERMOHONAN LENGKAP DITERIMA" in next_line:
+                    break 
+                
+                collected_title.append(all_lines[j])
+            
+            if collected_title:
+                extracted_data["TAJUK_PEROLEHAN"] = " ".join(collected_title).strip()
+            break # Stop searching the document once we found it
+
+    # --- NAMA SYARIKAT BOUNDARY LOGIC ---
+    for i, line_text in enumerate(all_lines):
+        # Find the label
+        if "SYARIKAT" in line_text.upper(): 
+            collected_company = []
+            # Look at the next few lines (up to 5 lines max)
+            for j in range(i + 1, min(i + 5, len(all_lines))):
+                next_line = all_lines[j].upper()
+                
+                # THE STOPPING WALLS (Label below, or label to the right)
+                if "TARIKH" in next_line or "ALAMAT" in next_line:
+                    break
+                
+                collected_company.append(all_lines[j])
+            
+            if collected_company:
+                raw_company = " ".join(collected_company).strip()
+                # Clean up IC numbers using regex (removes XXXX-XX-XXXX format)
+                clean_company = re.sub(r'\d{6}-\d{2}-\d{4}\s*', '', raw_company)
+                extracted_data["NAMA_SYARIKAT"] = clean_company.strip()
+            break # Stop searching the document once we found it
+
     return extracted_data
 
 if uploaded_files:

@@ -9,6 +9,7 @@ from azure.ai.formrecognizer import DocumentAnalysisClient
 
 # --- 1. AZURE SETUP ---
 AZURE_ENDPOINT = "https://bekal-ocr.cognitiveservices.azure.com/" 
+# Using Streamlit Secrets to hide your API key safely!
 AZURE_KEY = st.secrets["AZURE_KEY"]
 
 # --- 2. PAGE SETUP ---
@@ -20,6 +21,10 @@ st.write("Upload Borang Bekal forms, review the extracted data, and generate Wor
 st.subheader("Step 1: Upload Documents")
 uploaded_files = st.file_uploader("Upload Scanned Forms (PDF/Images)", accept_multiple_files=True)
 
+# Improvement 5: Tell the user exactly how many files they just uploaded
+if uploaded_files:
+    st.info(f"📁 You have successfully uploaded {len(uploaded_files)} file(s).")
+
 def extract_data_from_document(file):
     # Connect to your specific Azure account
     client = DocumentAnalysisClient(endpoint=AZURE_ENDPOINT, credential=AzureKeyCredential(AZURE_KEY))
@@ -28,7 +33,7 @@ def extract_data_from_document(file):
     poller = client.begin_analyze_document("prebuilt-document", document=file.getvalue())
     result = poller.result()
     
-    # DEFINE ONLY THE COLUMNS YOU WANT (Matches your Word tags exactly)
+    # DEFINE ONLY THE COLUMNS YOU WANT
     extracted_data = {
         "Filename": file.name,
         "NAMA_PEMBEKAL": "",
@@ -46,7 +51,7 @@ def extract_data_from_document(file):
             if kv_pair.key and kv_pair.value:
                 raw_key = kv_pair.key.content.upper()
                 
-                # THIS FIXES THE 2-LINE PROBLEM: Replaces newlines with a normal space
+                # Replaces newlines with a normal space
                 val_text = kv_pair.value.content.replace('\n', ' ').strip()
                 
                 # MATCH TO YOUR TEMPLATE TAGS
@@ -77,21 +82,37 @@ if uploaded_files:
                 # Pause for 1 second between files so we don't overwhelm Azure's Free Tier
                 time.sleep(1) 
             
-            st.session_state['ocr_data'] = pd.DataFrame(extracted_records)
+            # Create the DataFrame
+            df = pd.DataFrame(extracted_records)
+            
+            # --- DATA CLEANING STEP ---
+            # Improvement 3: Remove IC/Registration Numbers from the start of NAMA_SYARIKAT
+            if 'NAMA_SYARIKAT' in df.columns:
+                df['NAMA_SYARIKAT'] = df['NAMA_SYARIKAT'].astype(str).str.replace(r'^\d{6}-\d{2}-\d{4}\s*', '', regex=True)
+
+            # Improvement 4: Clear out the Date if it grabbed the "BELUM LENGKAP" boilerplate text
+            if 'TARIKH' in df.columns:
+                df['TARIKH'] = df['TARIKH'].apply(lambda x: "" if "BELUM LENGKAP" in str(x) else x)
+            # --------------------------
+            
+            st.session_state['ocr_data'] = df
             st.success("Extraction Complete!")
 
 # --- 4. REVIEW AND EDIT TABLE ---
 if 'ocr_data' in st.session_state:
     st.subheader("Step 2: Review and Edit Data")
-    st.write("Click on any cell below to fix typos before generating the Word documents.")
+    st.write("Click on any cell below to fix typos or manually paste missing data (like TAJUK_PEROLEHAN) before generating the Word documents.")
     
     edited_df = st.data_editor(st.session_state['ocr_data'], num_rows="dynamic", use_container_width=True)
 
     # --- 5. GENERATE WORD DOCS ---
     st.subheader("Step 3: Generate Output")
-    template_file = st.file_uploader("Upload Word Template (.docx)", type=["docx"])
     
-    if template_file and st.button("📝 Generate Word Documents"):
+    # Improvement 2: Hardcode the template file instead of asking for upload!
+    # IMPORTANT: Ensure your Word file in GitHub is exactly named "Borang Bekal Template.docx"
+    template_file = "Borang Bekal Template.docx" 
+    
+    if st.button("📝 Generate Word Documents"):
         with st.spinner("Creating documents..."):
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -107,8 +128,12 @@ if 'ocr_data' in st.session_state:
                     doc_io.seek(0)
                     
                     # Create a safe file name based on the NAMA_PEMBEKAL
-                    safe_name = str(row['NAMA_PEMBEKAL']).replace("/", "-") if row['NAMA_PEMBEKAL'] else f"Document_{index}"
-                    zip_file.writestr(f"Completed_{safe_name}.docx", doc_io.getvalue())
+                    safe_name = str(row['NAMA_PEMBEKAL']).replace("/", "-") if row['NAMA_PEMBEKAL'] else "TiadaNama"
+                    
+                    # Improvement 1: Add row index + 1 so files NEVER overwrite each other in the ZIP
+                    final_filename = f"Completed_{index + 1}_{safe_name}.docx"
+                    
+                    zip_file.writestr(final_filename, doc_io.getvalue())
             
             st.download_button(
                 label="⬇️ Download All Word Documents (ZIP)",

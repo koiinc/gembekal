@@ -1,4 +1,4 @@
 streamlit
-azure-ai-documentintelligence
+azure-ai-formrecognizer
 pandas
 docxtpl

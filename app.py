@@ -9,7 +9,7 @@ from azure.ai.formrecognizer import DocumentAnalysisClient
 
 # --- 1. AZURE SETUP ---
 AZURE_ENDPOINT = "https://bekal-ocr.cognitiveservices.azure.com/" 
-AZURE_KEY = "4Rf41kWTh6cNNyPLwCPl6HShqulSlGojojObXwDQTT4AOpQ10yiiJQQJ99CEACqBBLyXJ3w3AAALACOGCpCG"
+AZURE_KEY = st.secrets["AZURE_KEY"]
 
 # --- 2. PAGE SETUP ---
 st.set_page_config(page_title="Document OCR Portal", layout="wide")

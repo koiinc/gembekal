@@ -19,17 +19,20 @@ st.set_page_config(page_title="Document OCR Portal", layout="wide")
 st.title("📄 Document Extraction & Template Portal")
 st.write("Upload Borang Bekal forms, review the extracted data, and generate Word documents.")
 
-# --- SESSION STATE FOR UPLOADER RESET ---
-# This ensures we can force the file uploader to clear out old files
+# --- SESSION STATE INITIALIZATION ---
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = "init"
+
+# This is our running memory for the ZIP folder number!
+if "zip_counter" not in st.session_state:
+    st.session_state.zip_counter = 1
 
 # --- 3. BATCH UPLOAD ---
 st.subheader("Step 1: Upload Documents")
 uploaded_files = st.file_uploader(
     "Upload Scanned Forms (PDF/Images)", 
     accept_multiple_files=True,
-    key=st.session_state.uploader_key # Ties the uploader to our reset mechanism
+    key=st.session_state.uploader_key
 )
 
 if uploaded_files:
@@ -51,7 +54,7 @@ def extract_data_from_document(file):
         "TAJUK_PEROLEHAN": ""
     }
     
-    # 1. FIRST PASS: Try standard Key-Value Pairs for the easy/single-line fields
+    # 1. FIRST PASS: Try standard Key-Value Pairs
     if result.key_value_pairs:
         for kv_pair in result.key_value_pairs:
             if kv_pair.key and kv_pair.value:
@@ -62,107 +65,71 @@ def extract_data_from_document(file):
                 elif "TEL" in raw_key: extracted_data["NO_TEL"] = val_text
                 elif "TARIKH" in raw_key and not extracted_data["TARIKH"]: extracted_data["TARIKH"] = val_text
 
-    # 2. SECOND PASS: Advanced Boundary Checking for complex/multi-line table fields
+    # 2. SECOND PASS: Advanced Boundary Checking
     all_lines = [line.content.strip() for page in result.pages for line in page.lines]
 
     # --- NAMA PEMBEKAL BOUNDARY LOGIC ---
     for i, line_text in enumerate(all_lines):
         if "NAMA PEMBEKAL" in line_text.upper():
             collected_name = []
-            
-            # Capture anything on the exact same line
             remainder = re.sub(r'(?i)NAMA PEMBEKAL\s*:?\s*', '', line_text).strip()
-            if remainder:
-                collected_name.append(remainder)
+            if remainder: collected_name.append(remainder)
                 
-            # Look at the next few lines for the second line of the name
             for j in range(i + 1, min(i + 5, len(all_lines))):
                 next_line = all_lines[j].strip()
                 next_line_upper = next_line.upper()
-                
-                # THE STOPPING WALL (Looks for the EMEL cell to the right or NAMA SYARIKAT below)
-                if "EMEL" in next_line_upper or "NAMA SYARIKAT" in next_line_upper:
-                    break
-                    
+                if "EMEL" in next_line_upper or "NAMA SYARIKAT" in next_line_upper: break
                 collected_name.append(next_line)
                 
-            if collected_name:
-                extracted_data["NAMA_PEMBEKAL"] = " ".join(collected_name).strip()
+            if collected_name: extracted_data["NAMA_PEMBEKAL"] = " ".join(collected_name).strip()
             break
 
     # --- NAMA SYARIKAT BOUNDARY LOGIC ---
     for i, line_text in enumerate(all_lines):
         if "NAMA SYARIKAT" in line_text.upper(): 
             collected_company = []
-            
-            # Capture anything on the exact same line
             remainder = re.sub(r'(?i)NAMA SYARIKAT\s*:?\s*', '', line_text).strip()
-            if remainder:
-                collected_company.append(remainder)
+            if remainder: collected_company.append(remainder)
             
-            # Read downwards to get the rest of the company name
             for j in range(i + 1, min(i + 5, len(all_lines))):
                 next_line = all_lines[j].strip()
                 next_line_upper = next_line.upper()
-                
-                # THE STOPPING WALLS (Fields to the right or directly below)
-                if "ALAMAT" in next_line_upper or "TARIKH" in next_line_upper or "PENSIJILAN" in next_line_upper:
-                    break
-                
+                if "ALAMAT" in next_line_upper or "TARIKH" in next_line_upper or "PENSIJILAN" in next_line_upper: break
                 collected_company.append(next_line)
             
-            if collected_company:
-                extracted_data["NAMA_SYARIKAT"] = " ".join(collected_company).strip()
+            if collected_company: extracted_data["NAMA_SYARIKAT"] = " ".join(collected_company).strip()
             break
 
     # --- ALAMAT PREMIS BOUNDARY LOGIC ---
     for i, line_text in enumerate(all_lines):
         if "ALAMAT PREMIS" in line_text.upper():
             collected_alamat = []
-            
-            # Capture anything on the exact same line
             remainder = re.sub(r'(?i)ALAMAT PREMIS\s*:?\s*', '', line_text).strip()
-            if remainder:
-                collected_alamat.append(remainder)
+            if remainder: collected_alamat.append(remainder)
                 
-            # Look at the next few lines for the rest of the address
             for j in range(i + 1, min(i + 8, len(all_lines))):
                 next_line = all_lines[j].strip()
                 next_line_upper = next_line.upper()
-                
-                # THE STOPPING WALL (Looks for the fields in the row directly below it)
-                if "TARIKH" in next_line_upper or "PENSIJILAN" in next_line_upper or "BESS" in next_line_upper:
-                    break
-                    
+                if "TARIKH" in next_line_upper or "PENSIJILAN" in next_line_upper or "BESS" in next_line_upper: break
                 collected_alamat.append(next_line)
                 
-            if collected_alamat:
-                extracted_data["ALAMAT_PREMIS"] = " ".join(collected_alamat).strip()
+            if collected_alamat: extracted_data["ALAMAT_PREMIS"] = " ".join(collected_alamat).strip()
             break
 
     # --- TAJUK PEROLEHAN BOUNDARY LOGIC ---
     for i, line_text in enumerate(all_lines):
         if "TAJUK PEROLEHAN" in line_text.upper():
             collected_title = []
-            
-            # Capture text on the exact same line
             remainder = re.sub(r'(?i)TAJUK PEROLEHAN\s*:?\s*', '', line_text).strip()
-            if remainder:
-                collected_title.append(remainder)
+            if remainder: collected_title.append(remainder)
                 
-            # Look at the next few lines for the rest of the text
             for j in range(i + 1, min(i + 5, len(all_lines))):
                 next_line = all_lines[j].strip()
                 next_line_upper = next_line.upper()
-                
-                # THE STOPPING WALL (Looks for the field directly below it)
-                if "TARIKH PERMOHONAN" in next_line_upper or "DITERIMA" in next_line_upper:
-                    break 
-                
+                if "TARIKH PERMOHONAN" in next_line_upper or "DITERIMA" in next_line_upper: break 
                 collected_title.append(next_line)
             
-            if collected_title:
-                extracted_data["TAJUK_PEROLEHAN"] = " ".join(collected_title).strip()
+            if collected_title: extracted_data["TAJUK_PEROLEHAN"] = " ".join(collected_title).strip()
             break 
 
     return extracted_data
@@ -178,19 +145,15 @@ if uploaded_files:
                 except Exception as e:
                     st.error(f"Failed to process {file.name}: {e}")
                 
-                # Pause for 1 second between files to respect Azure Free Tier limits
                 time.sleep(1) 
             
             if extracted_records:
                 df = pd.DataFrame(extracted_records)
                 
-                # --- DATA CLEANING STEP ---
                 if 'NAMA_SYARIKAT' in df.columns:
-                    # Remove IC/Registration Numbers from the start of NAMA_SYARIKAT
                     df['NAMA_SYARIKAT'] = df['NAMA_SYARIKAT'].astype(str).str.replace(r'^\d{6}-\d{2}-\d{4}\s*', '', regex=True)
 
                 if 'TARIKH' in df.columns:
-                    # Clear out the Date if it grabbed the boilerplate text
                     df['TARIKH'] = df['TARIKH'].apply(lambda x: "" if "BELUM LENGKAP" in str(x).upper() else x)
                 
                 st.session_state['ocr_data'] = df
@@ -214,6 +177,16 @@ if 'ocr_data' in st.session_state:
         else:
             with st.spinner("Creating documents..."):
                 zip_buffer = io.BytesIO()
+                
+                # --- ZIP FILE NAMING LOGIC ---
+                # Get the very first company name in the table to use for the ZIP folder
+                first_company_full = str(edited_df.iloc[0].get('NAMA_SYARIKAT', 'Syarikat')).strip()
+                # Get just the first word and strip out weird characters
+                first_company_word = re.sub(r'[^A-Za-z0-9]', '', first_company_full.split()[0]) if first_company_full else "Syarikat"
+                
+                current_count = st.session_state.zip_counter
+                zip_filename = f"{first_company_word}_{current_count}.zip"
+                
                 with zipfile.ZipFile(zip_buffer, "w") as zip_file:
                     for index, row in edited_df.iterrows():
                         doc = DocxTemplate(template_file)
@@ -224,31 +197,42 @@ if 'ocr_data' in st.session_state:
                         doc.save(doc_io)
                         doc_io.seek(0)
                         
-                        safe_name = str(row.get('NAMA_PEMBEKAL', 'TiadaNama')).replace("/", "-")
-                        if not safe_name or safe_name.lower() == 'nan':
-                            safe_name = "TiadaNama"
+                        # --- INDIVIDUAL DOCX NAMING LOGIC ---
+                        # 1. Get first word of the company for THIS specific row
+                        row_company_full = str(row.get('NAMA_SYARIKAT', 'Syarikat')).strip()
+                        row_company_word = re.sub(r'[^A-Za-z0-9]', '', row_company_full.split()[0]) if row_company_full else "Syarikat"
+                        
+                        # 2. Get the last 5 digits of the TAJUK_PEROLEHAN
+                        tajuk_text = str(row.get('TAJUK_PEROLEHAN', ''))
+                        # This strips away all letters and parentheses, leaving ONLY numbers
+                        all_digits = re.sub(r'\D', '', tajuk_text) 
+                        last_5_digits = all_digits[-5:] if all_digits else "00000"
                             
-                        final_filename = f"Completed_{index + 1}_{safe_name}.docx"
-                        zip_file.writestr(final_filename, doc_io.getvalue())
+                        final_docx_name = f"{row_company_word}_{last_5_digits}.docx"
+                        zip_file.writestr(final_docx_name, doc_io.getvalue())
+                
+                # Increment our running memory counter for the next batch!
+                st.session_state.zip_counter += 1
                 
                 st.download_button(
-                    label="⬇️ Download All Word Documents (ZIP)",
+                    label=f"⬇️ Download Documents ({zip_filename})",
                     data=zip_buffer.getvalue(),
-                    file_name="Completed_Documents.zip",
+                    file_name=zip_filename,
                     mime="application/zip"
                 )
 
 # --- 6. START OVER BUTTON ---
-st.markdown("---") # Visual divider line
+st.markdown("---") 
 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 
-with col4: # Places the button in the far right column
+with col4: 
     if st.button("🔄 Start Over", type="primary", use_container_width=True):
-        # 1. Clear out the saved table data
+        # We must SAVE the counter before clearing the session, or we lose our memory!
+        saved_counter = st.session_state.zip_counter
+        
         st.session_state.clear()
         
-        # 2. Give the file uploader a new unique key to force it to empty out
+        # Restore the memory and reset the uploader
+        st.session_state.zip_counter = saved_counter
         st.session_state.uploader_key = str(time.time())
-        
-        # 3. Reload the page immediately
         st.rerun()

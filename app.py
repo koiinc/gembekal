@@ -19,9 +19,18 @@ st.set_page_config(page_title="Document OCR Portal", layout="wide")
 st.title("📄 Document Extraction & Template Portal")
 st.write("Upload Borang Bekal forms, review the extracted data, and generate Word documents.")
 
+# --- SESSION STATE FOR UPLOADER RESET ---
+# This ensures we can force the file uploader to clear out old files
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = "init"
+
 # --- 3. BATCH UPLOAD ---
 st.subheader("Step 1: Upload Documents")
-uploaded_files = st.file_uploader("Upload Scanned Forms (PDF/Images)", accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "Upload Scanned Forms (PDF/Images)", 
+    accept_multiple_files=True,
+    key=st.session_state.uploader_key # Ties the uploader to our reset mechanism
+)
 
 if uploaded_files:
     st.info(f"📁 You have successfully uploaded {len(uploaded_files)} file(s).")
@@ -228,3 +237,18 @@ if 'ocr_data' in st.session_state:
                     file_name="Completed_Documents.zip",
                     mime="application/zip"
                 )
+
+# --- 6. START OVER BUTTON ---
+st.markdown("---") # Visual divider line
+col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+
+with col4: # Places the button in the far right column
+    if st.button("🔄 Start Over", type="primary", use_container_width=True):
+        # 1. Clear out the saved table data
+        st.session_state.clear()
+        
+        # 2. Give the file uploader a new unique key to force it to empty out
+        st.session_state.uploader_key = str(time.time())
+        
+        # 3. Reload the page immediately
+        st.rerun()

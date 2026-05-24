@@ -9,7 +9,7 @@ import re
 import os
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageEnhance
 
 # --- 1. AZURE SETUP ---
 AZURE_ENDPOINT = "https://bekal-ocr.cognitiveservices.azure.com/"
@@ -19,34 +19,40 @@ AZURE_KEY = st.secrets["AZURE_KEY"]
 # --- [NANDATANGAN - IMAGE PROCESSING FUNCTION] ---
 def process_signature(uploaded_file):
     """
-    Takes an uploaded image file (bytes), removes the white background, 
-    makes it semi-transparent, and sharpens it.
+    Boosts contrast, removes gray/white backgrounds, and sharpens the ink.
     """
     try:
-        # Open image and convert to RGBA to allow transparency
+        # Open image and convert to RGBA
         img = Image.open(uploaded_file).convert("RGBA")
+        
+        # 1. BOOST CONTRAST FIRST (Makes ink darker, background lighter)
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(2.5) # Increase contrast heavily
+        
+        # 2. SHARPEN
+        img = img.filter(ImageFilter.SHARPEN)
+        img = img.filter(ImageFilter.SHARPEN) 
+        
         datas = img.getdata()
-
         newData = []
-        # Background Removal Logic (Pillow)
-        tolerance = 230
+        
+        # 3. AGGRESSIVE BACKGROUND REMOVAL
         for item in datas:
-            if item[0] > tolerance and item[1] > tolerance and item[2] > tolerance:
-                # Replace white pixel with transparent pixel
-                newData.append((255, 255, 255, 0))
+            # Calculate the average brightness of the pixel
+            avg_brightness = (item[0] + item[1] + item[2]) / 3
+            
+            # If the pixel is lighter than dark gray (150 out of 255), delete it
+            if avg_brightness > 150:
+                newData.append((255, 255, 255, 0)) # Completely transparent
             else:
-                # Translucence: Make non-white pixels semi-transparent
-                newData.append((item[0], item[1], item[2], 180)) 
+                # Keep the ink, make it slightly translucent so it blends nicely
+                newData.append((item[0], item[1], item[2], 220)) 
         
         img.putdata(newData)
-        
-        # Sharpening Filter
-        img = img.filter(ImageFilter.SHARPEN)
-        img = img.filter(ImageFilter.SHARPEN) # Sharpen twice for boldness
 
         # Save to a byte stream
         img_bytes = io.BytesIO()
-        img.save(img_bytes, format='PNG') # Must be PNG to preserve transparency
+        img.save(img_bytes, format='PNG')
         img_bytes.seek(0)
         return img_bytes
     except Exception as e:

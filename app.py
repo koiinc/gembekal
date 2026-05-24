@@ -258,4 +258,41 @@ if 'ocr_data' in st.session_state:
 
                         doc.render(context)
                         
-                        doc_
+                        doc_io = io.BytesIO()
+                        doc.save(doc_io)
+                        doc_io.seek(0)
+                        
+                        # --- INDIVIDUAL DOCX NAMING LOGIC ---
+                        row_company_full = str(row.get('NAMA_SYARIKAT', 'Syarikat')).strip()
+                        row_company_word = re.sub(r'[^A-Za-z0-9]', '', row_company_full.split()[0]) if row_company_full else "Syarikat"
+                        
+                        tajuk_text = str(row.get('TAJUK_PEROLEHAN', ''))
+                        all_digits = re.sub(r'\D', '', tajuk_text) 
+                        last_5_digits = all_digits[-5:] if all_digits else "00000"
+                            
+                        final_docx_name = f"{row_company_word}_{last_5_digits}.docx"
+                        zip_file.writestr(final_docx_name, doc_io.getvalue())
+                
+                # Increment our running memory counter for the next batch!
+                st.session_state.zip_counter += 1
+                
+                st.download_button(
+                    label=f"⬇️ Download Documents ({zip_filename})",
+                    data=zip_buffer.getvalue(),
+                    file_name=zip_filename,
+                    mime="application/zip"
+                )
+
+# --- 6. START OVER BUTTON ---
+st.markdown("---") 
+col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+
+with col4: 
+    if st.button("🔄 Start Over", type="primary", use_container_width=True):
+        saved_counter = st.session_state.zip_counter
+        
+        st.session_state.clear()
+        
+        st.session_state.zip_counter = saved_counter
+        st.session_state.uploader_key = str(time.time())
+        st.rerun()

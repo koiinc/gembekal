@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from docxtpl import DocxTemplate, InlineImage # Updated import
-from docx.shared import Mm # Import for image sizing
+from docxtpl import DocxTemplate, InlineImage
+from docx.shared import Mm
 import io
 import zipfile
 import time
@@ -9,10 +9,7 @@ import re
 import os
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.formrecognizer import DocumentAnalysisClient
-
-# --- [ADD NEW IMPORTS HERE] ---
-from PIL import Image, ImageOps, ImageFilter
-# --------------------------------
+from PIL import Image, ImageFilter
 
 # --- 1. AZURE SETUP ---
 AZURE_ENDPOINT = "https://bekal-ocr.cognitiveservices.azure.com/"
@@ -28,20 +25,17 @@ def process_signature(uploaded_file):
     try:
         # Open image and convert to RGBA to allow transparency
         img = Image.open(uploaded_file).convert("RGBA")
-        datas = img.get_data()
+        datas = img.getdata()
 
         newData = []
         # Background Removal Logic (Pillow)
-        # We replace pixels that are 'white-ish' (above 230 in RGB channels) 
-        # with a completely transparent pixel (alpha = 0)
         tolerance = 230
         for item in datas:
             if item[0] > tolerance and item[1] > tolerance and item[2] > tolerance:
                 # Replace white pixel with transparent pixel
                 newData.append((255, 255, 255, 0))
             else:
-                # Translucence: Make non-white pixels (the ink) semi-transparent (180 out of 255)
-                # You can reduce 180 to make it more see-through, increase it to make it bolder.
+                # Translucence: Make non-white pixels semi-transparent
                 newData.append((item[0], item[1], item[2], 180)) 
         
         img.putdata(newData)
@@ -215,44 +209,33 @@ if 'ocr_data' in st.session_state:
     # --- 5. GENERATE WORD DOCS ---
     st.subheader("Step 3: Generate Output")
     
-# --- [NANDATANGAN - IMAGE PROCESSING FUNCTION] ---
-def process_signature(uploaded_file):
-    """
-    Takes an uploaded image file (bytes), removes the white background, 
-    makes it semi-transparent, and sharpens it.
-    """
-    try:
-        # Open image and convert to RGBA to allow transparency
-        img = Image.open(uploaded_file).convert("RGBA")
-        # FIXED: getdata() instead of get_data()
-        datas = img.getdata()
-
-        newData = []
-        # Background Removal Logic (Pillow)
-        tolerance = 230
-        for item in datas:
-            if item[0] > tolerance and item[1] > tolerance and item[2] > tolerance:
-                # Replace white pixel with transparent pixel
-                newData.append((255, 255, 255, 0))
-            else:
-                # Translucence: Make non-white pixels semi-transparent
-                newData.append((item[0], item[1], item[2], 180)) 
-        
-        img.putdata(newData)
-        
-        # Sharpening Filter
-        img = img.filter(ImageFilter.SHARPEN)
-        img = img.filter(ImageFilter.SHARPEN) # Sharpen twice for boldness
-
-        # Save to a byte stream
-        img_bytes = io.BytesIO()
-        img.save(img_bytes, format='PNG') # Must be PNG to preserve transparency
-        img_bytes.seek(0)
-        return img_bytes
-    except Exception as e:
-        st.error(f"Error processing signature image: {e}")
-        return None
-# ---------------------------------------------------
+    # --- [NANDATANGAN - ADD SIGNATURE UPLOADER UI] ---
+    sig_col1, sig_col2 = st.columns([1, 2])
+    with sig_col1:
+        st.write("📸 (Optional) Upload Stamp/Signature Image")
+        signature_file = st.file_uploader(
+            "Upload Stamp JPG/PNG", 
+            type=["jpg", "jpeg", "png"],
+            key="signature_uploader"
+        )
+        if signature_file:
+            st.image(signature_file, caption="Original Upload", width=150)
+    # -------------------------------------------------
+    
+    template_file = "Borang Bekal Template.docx" 
+    
+    if st.button("📝 Generate Word Documents"):
+        if not os.path.exists(template_file):
+            st.error(f"Template file '{template_file}' not found. Please ensure it is in the same directory as this script.")
+        else:
+            with st.spinner("Creating documents..."):
+                zip_buffer = io.BytesIO()
+                
+                # --- [NANDATANGAN - PROCESS IMAGE ONCE] ---
+                processed_sign_stream = None
+                if signature_file:
+                    processed_sign_stream = process_signature(signature_file)
+                # -------------------------------------------
                 
                 # --- ZIP FILE NAMING LOGIC ---
                 first_company_full = str(edited_df.iloc[0].get('NAMA_SYARIKAT', 'Syarikat')).strip()
@@ -267,52 +250,12 @@ def process_signature(uploaded_file):
                         context = row.dropna().to_dict()
                         
                         # --- [NANDATANGAN - ATTACH IMAGE TO CONTEXT] ---
-                        # We must reset the stream pointer for EVERY document loop
                         if processed_sign_stream and signature_file:
                             processed_sign_stream.seek(0)
-                            # Create the InlineImage object needed by docxtpl
-                            # We set a fixed width (e.g., 45mm), which keeps aspect ratio
                             sign_inline = InlineImage(doc, processed_sign_stream, width=Mm(45))
                             context['sign'] = sign_inline
                         # -----------------------------------------------
 
                         doc.render(context)
                         
-                        doc_io = io.BytesIO()
-                        doc.save(doc_io)
-                        doc_io.seek(0)
-                        
-                        # --- INDIVIDUAL DOCX NAMING LOGIC ---
-                        row_company_full = str(row.get('NAMA_SYARIKAT', 'Syarikat')).strip()
-                        row_company_word = re.sub(r'[^A-Za-z0-9]', '', row_company_full.split()[0]) if row_company_full else "Syarikat"
-                        
-                        tajuk_text = str(row.get('TAJUK_PEROLEHAN', ''))
-                        all_digits = re.sub(r'\D', '', tajuk_text) 
-                        last_5_digits = all_digits[-5:] if all_digits else "00000"
-                            
-                        final_docx_name = f"{row_company_word}_{last_5_digits}.docx"
-                        zip_file.writestr(final_docx_name, doc_io.getvalue())
-                
-                # Increment our running memory counter for the next batch!
-                st.session_state.zip_counter += 1
-                
-                st.download_button(
-                    label=f"⬇️ Download Documents ({zip_filename})",
-                    data=zip_buffer.getvalue(),
-                    file_name=zip_filename,
-                    mime="application/zip"
-                )
-
-# --- 6. START OVER BUTTON ---
-st.markdown("---") 
-col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-
-with col4: 
-    if st.button("🔄 Start Over", type="primary", use_container_width=True):
-        saved_counter = st.session_state.zip_counter
-        
-        st.session_state.clear()
-        
-        st.session_state.zip_counter = saved_counter
-        st.session_state.uploader_key = str(time.time())
-        st.rerun()
+                        doc_

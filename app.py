@@ -215,34 +215,44 @@ if 'ocr_data' in st.session_state:
     # --- 5. GENERATE WORD DOCS ---
     st.subheader("Step 3: Generate Output")
     
-    # --- [NANDATANGAN - ADD SIGNATURE UPLOADER UI] ---
-    # Put this inside a small column to keep it neat
-    sig_col1, sig_col2 = st.columns([1, 2])
-    with sig_col1:
-        st.write("📸 (Optional) Upload Stamp/Signature Image")
-        signature_file = st.file_uploader(
-            "Upload Stamp JPG/PNG", 
-            type=["jpg", "jpeg", "png"],
-            key="signature_uploader"
-        )
-        if signature_file:
-            st.image(signature_file, caption="Original Upload", width=150)
-    # -------------------------------------------------
-    
-    template_file = "Borang Bekal Template.docx" 
-    
-    if st.button("📝 Generate Word Documents"):
-        if not os.path.exists(template_file):
-            st.error(f"Template file '{template_file}' not found. Please ensure it is in the same directory as this script.")
-        else:
-            with st.spinner("Creating documents..."):
-                zip_buffer = io.BytesIO()
-                
-                # --- [NANDATANGAN - PROCESS IMAGE ONCE] ---
-                processed_sign_stream = None
-                if signature_file:
-                    processed_sign_stream = process_signature(signature_file)
-                # -------------------------------------------
+# --- [NANDATANGAN - IMAGE PROCESSING FUNCTION] ---
+def process_signature(uploaded_file):
+    """
+    Takes an uploaded image file (bytes), removes the white background, 
+    makes it semi-transparent, and sharpens it.
+    """
+    try:
+        # Open image and convert to RGBA to allow transparency
+        img = Image.open(uploaded_file).convert("RGBA")
+        # FIXED: getdata() instead of get_data()
+        datas = img.getdata()
+
+        newData = []
+        # Background Removal Logic (Pillow)
+        tolerance = 230
+        for item in datas:
+            if item[0] > tolerance and item[1] > tolerance and item[2] > tolerance:
+                # Replace white pixel with transparent pixel
+                newData.append((255, 255, 255, 0))
+            else:
+                # Translucence: Make non-white pixels semi-transparent
+                newData.append((item[0], item[1], item[2], 180)) 
+        
+        img.putdata(newData)
+        
+        # Sharpening Filter
+        img = img.filter(ImageFilter.SHARPEN)
+        img = img.filter(ImageFilter.SHARPEN) # Sharpen twice for boldness
+
+        # Save to a byte stream
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG') # Must be PNG to preserve transparency
+        img_bytes.seek(0)
+        return img_bytes
+    except Exception as e:
+        st.error(f"Error processing signature image: {e}")
+        return None
+# ---------------------------------------------------
                 
                 # --- ZIP FILE NAMING LOGIC ---
                 first_company_full = str(edited_df.iloc[0].get('NAMA_SYARIKAT', 'Syarikat')).strip()
